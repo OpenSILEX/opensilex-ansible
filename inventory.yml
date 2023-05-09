@@ -3,15 +3,15 @@ all:
   children:
     your-host-group:
       vars:
-        # Ansible connexion parameters
+        # Host connexion variables
         ansible_user: opensilex
-        # Deployment parameters
+        # Deployment configuration variables
         backup_deploy_location: "/home/{{ ansible_user }}/opensilex-backup"
         backup_log_location: "{{ backup_deploy_location }}/log"
         backup_logrotate_location: "{{ backup_log_location }}/logrotate"
         remote_ssh_key: ""
         remote_ssh_key_public: ""
-        # Script templating
+        # Scripts configuration variables
         j2_backup_directory: "{{ backup_deploy_location }}/backups"
         j2_bin_directory: "/home/{{ ansible_user }}/opensilex-instances/bin/{{ inventory_hostname }}"
         j2_logs_directory: "/home/{{ ansible_user }}/opensilex-instances/logs"
