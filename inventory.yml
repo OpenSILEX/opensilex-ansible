@@ -1,13 +1,17 @@
+# Inventory template - replace with your own groups, hosts and variables
 all:
   children:
     your-host-group:
       vars:
+        # Ansible connexion parameters
         ansible_user: opensilex
+        # Deployment parameters
         backup_deploy_location: "/home/{{ ansible_user }}/opensilex-backup"
         backup_log_location: "{{ backup_deploy_location }}/log"
         backup_logrotate_location: "{{ backup_log_location }}/logrotate"
         remote_ssh_key: ""
         remote_ssh_key_public: ""
+        # Script templating
         j2_backup_directory: "{{ backup_deploy_location }}/backups"
         j2_bin_directory: "/home/{{ ansible_user }}/opensilex-instances/bin/{{ inventory_hostname }}"
         j2_logs_directory: "/home/{{ ansible_user }}/opensilex-instances/logs"
