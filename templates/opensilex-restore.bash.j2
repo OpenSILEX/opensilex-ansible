@@ -1,0 +1,197 @@
+#!/bin/bash
+
+######################################
+##      opensilex-backup.sh
+##
+## Creation date : 2023-04-19
+## Contact : renaud.colin@inrae.fr
+##           valentin.rigolle@inrae.fr
+######################################
+
+# This script restores a backup for a specific instance. The backup must be
+# created using the `opensilex-backup.bash` script.
+
+###############
+# Configuration
+###############
+
+# Configure the script by changing the following variables
+# Only the `BACKUP_DIRECTORY` is required, everything else is optional
+
+# Required : backup directory location
+BACKUP_DIRECTORY="{{ j2_backup_directory | mandatory }}" # No trailing /
+
+# Binary folder location (leave empty for no binary restoration)
+BIN_DIRECTORY="{{ j2_bin_directory | default('') }}" # No trailing /
+
+# Files folder location (leave empty for no data restoration)
+DATA_DIRECTORY="{{ j2_data_directory | default('') }}" # No trailing /
+
+# Logs folder location (leave empty for no logs restoration)
+LOGS_DIRECTORY="{{ j2_logs_directory | default('') }}"
+
+# Mongo configuration (leave empty for no mongo restoration)
+MONGO_HOST="{{ j2_mongo_host | default('') }}"
+MONGO_DATABASE="{{ j2_mongo_database | default('') }}"
+
+# RDF4J configuration (leave empty for no RDF4J restoration)
+RDF4J_HOST="{{ j2_rdf4j_host | default('') }}"
+RDF4J_REPOSITORY="{{ j2_rdf4j_repository | default('') }}"
+
+# Remote configuration (leave empty if no backup storage on remote)
+REMOTE_BACKUP_LOGIN="{{ j2_remote_backup_login | default('') }}"
+REMOTE_BACKUP_HOST="{{ j2_remote_backup_host | default('') }}"
+REMOTE_BACKUP_DIRECTORY="{{ j2_remote_backup_directory | default('') }}" # No trailing /
+REMOTE_BACKUP_SSH_KEYFILE="{{ j2_remote_backup_ssh_keyfile | default('') }}"
+
+{# Common functions #}
+{% include 'utils.bash.j2' %}
+
+###############
+# Select backup
+###############
+
+echoInfo "Restore" "Looking for backups in ${BACKUP_DIRECTORY}"
+
+find ${BACKUP_DIRECTORY}/ -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -n
+exitIfFail
+
+DEFAULT_BACKUP=$(find ${BACKUP_DIRECTORY}/ -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -n | tail -n 1)
+
+echoInfo "Restore" "Select a backup to restore (default: ${DEFAULT_BACKUP}) :"
+printf "> "
+read -r SELECTED_BACKUP
+
+if [[ -z "${SELECTED_BACKUP}" ]]; then
+  SELECTED_BACKUP="${DEFAULT_BACKUP}"
+fi
+
+BACKUP_PATH="${BACKUP_DIRECTORY}/${SELECTED_BACKUP}"
+
+if [[ ! -d "${BACKUP_PATH}" ]]; then
+  echoError "Restore" "Backup ${SELECTED_BACKUP} does not exist in ${BACKUP_DIRECTORY}"
+fi
+
+################
+# Restore script
+################
+
+# Binary
+
+BIN_ARCHIVE="${BACKUP_PATH}/bin.tar.gz"
+
+if [[ -d "${BIN_DIRECTORY}" ]]; then
+  if [[ -e "${BIN_ARCHIVE}" ]]; then
+    echoInfo "Data" "Bin backup found, restore it ? (this will replace all files in ${BIN_DIRECTORY}) [y/n]"
+    printf "> "
+    read -r ANSWER
+    if [[ "${ANSWER}" == "y" ]]; then
+      rm ${BIN_DIRECTORY}/* -r
+      tar xzvf ${BIN_ARCHIVE} -C ${BIN_DIRECTORY} .
+      exitIfFail
+      echoSuccess "Binary" "Restored binary archive in ${BIN_DIRECTORY}"
+    else
+      echoInfo "Binary" "Skipped binary restoration"
+    fi
+  else
+    echoInfo "Binary" "No binary backup found for ${SELECTED_BACKUP}"
+  fi
+else
+  echoInfo "Binary" "No binary directory"
+fi
+
+# Data
+
+DATA_ARCHIVE="${BACKUP_PATH}/data.tar.gz"
+
+if [[ -d "${DATA_DIRECTORY}" ]]; then
+  if [[ -e "${DATA_ARCHIVE}" ]]; then
+    echoInfo "Data" "Data backup found, restore it ? (this will replace all files in ${DATA_DIRECTORY}) [y/n]"
+    printf "> "
+    read -r ANSWER
+    if [[ "${ANSWER}" == "y" ]]; then
+      rm ${DATA_DIRECTORY}/* -r
+      tar xzvf ${DATA_ARCHIVE} -C ${DATA_DIRECTORY} .
+      exitIfFail
+      echoSuccess "Data" "Restored data archive in ${DATA_DIRECTORY}"
+    else
+      echoInfo "Data" "Skipped data restoration"
+    fi
+  else
+    echoInfo "Data" "No data backup found for ${SELECTED_BACKUP}"
+  fi
+else
+  echoInfo "Data" "No data directory"
+fi
+
+# Logs
+
+LOGS_ARCHIVE="${BACKUP_PATH}/logs.tar.gz"
+
+if [[ -d "${LOGS_DIRECTORY}" ]]; then
+  if [[ -e "${LOGS_ARCHIVE}" ]]; then
+    echoInfo "Logs" "Logs backup found, restore it ? (this will replace all files in ${LOGS_DIRECTORY}) [y/n]"
+    printf "> "
+    read -r ANSWER
+    if [[ "${ANSWER}" == "y" ]]; then
+      rm ${LOGS_DIRECTORY}/* -r
+      tar xzvf ${LOGS_ARCHIVE} -C ${LOGS_DIRECTORY} .
+      exitIfFail
+      echoSuccess "Logs" "Restored logs archive in ${LOGS_DIRECTORY}"
+    else
+      echoInfo "Logs" "Skipped logs restoration"
+    fi
+  else
+    echoInfo "Logs" "No logs backup found for ${SELECTED_BACKUP}"
+  fi
+else
+  echoInfo "Logs" "No logs directory"
+fi
+
+# MongoDB
+
+MONGO_DUMP_DIRECTORY="${BACKUP_PATH}/mongodb"
+
+if [[ -n "${MONGO_HOST}" ]]; then
+  if [[ -d "${MONGO_DUMP_DIRECTORY}" ]]; then
+    echoInfo "MongoDB" "MongoDB backup found, restore it ? (this will overwrite the database ${MONGO_DATABASE}) [y/n]"
+    printf "> "
+    read -r ANSWER
+    if [[ "${ANSWER}" == "y" ]]; then
+      mongorestore -h ${MONGO_HOST} --drop ${MONGO_DUMP_DIRECTORY}
+      exitIfFail
+      echoSuccess "MongoDB" "Restored database ${MONGO_DATABASE}"
+    else
+      echoInfo "MongoDB" "Skipped MongoDB restoration"
+    fi
+  else
+    echoInfo "MongoDB" "No MongoDB dump found for ${SELECTED_BACKUP}"
+  fi
+else
+  echoInfo "MongoDB" "No MongoDB host"
+fi
+
+# RDF4J
+
+RDF4J_EXPORT_FILE="${BACKUP_PATH}/rdf4j/${RDF4J_REPOSITORY}.trig"
+
+if [[ -n "${RDF4J_HOST}" ]]; then
+  if [[ -e "${RDF4J_EXPORT_FILE}" ]]; then
+    echoInfo "RDF4J" "RDF4J backup found, restore it ? (this will overwrite the repository ${RDF4J_REPOSITORY}) [y/n]"
+    printf "> "
+    read -r ANSWER
+    if [[ "${ANSWER}" == "y" ]]; then
+      curl -X DELETE ${RDF4J_HOST}/repositories/${RDF4J_REPOSITORY}/statements -v --fail
+      exitIfFail
+      curl -X PUT -H "Content-Type: application/x-trig" --data "@${RDF4J_EXPORT_FILE}" ${RDF4J_HOST}/repositories/${RDF4J_REPOSITORY}/statements -v --fail
+      exitIfFail
+      echoSuccess "RDF4J" "Restored repository ${RDF4J_REPOSITORY}"
+    else
+      echoInfo "RDF4J" "Skipped RDF4J restoration"
+    fi
+  else
+    echoInfo "RDF4J" "No repository export found for ${SELECTED_BACKUP}"
+  fi
+else
+  echoInfo "RDF4J" "No RDF4J host"
+fi

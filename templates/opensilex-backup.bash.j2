@@ -1,0 +1,182 @@
+#!/bin/bash
+
+######################################
+##      opensilex-backup.sh
+##
+## Creation date : 2023-03-31
+## Update date : 2023-04-04
+## Contact : valentin.rigolle@inrae.fr
+######################################
+
+# This script makes a backup for a specific instance and deletes backups
+# older than a specified retaining duration.
+# An instance has up to 5 components :
+# - A folder containing binaries & configuration files
+# - A folder containing files stored on the filesystem
+# - A folder containing log files
+# - A mongodb repository
+# - A rdf4j repository
+# This script can be used to make a backup of each specified component.
+
+###############
+# Configuration
+###############
+
+# Configure the script by changing the following variables
+# Only the `BACKUP_DIRECTORY` is required, everything else is optional
+
+# Required : backup directory location
+BACKUP_DIRECTORY="{{ j2_backup_directory | mandatory }}" # No trailing /
+
+# Binary folder location (leave empty for no binary backup)
+BIN_DIRECTORY="{{ j2_bin_directory | default('') }}" # No trailing /
+
+# Files folder location (leave empty for no data backup)
+DATA_DIRECTORY="{{ j2_data_directory | default('') }}" # No trailing /
+
+# Logs folder location (leave empty for no logs backup)
+LOGS_DIRECTORY="{{ j2_logs_directory | default('') }}"
+
+# Mongo configuration (leave empty for no mongo backup)
+MONGO_HOST="{{ j2_mongo_host | default('') }}"
+MONGO_DATABASE="{{ j2_mongo_database | default('') }}"
+
+# RDF4J configuration (leave empty for no RDF4J backup)
+RDF4J_HOST="{{ j2_rdf4j_host | default('') }}"
+RDF4J_REPOSITORY="{{ j2_rdf4j_repository | default('') }}"
+
+# Backup retaining duration (leave empty to always keep backups)
+BACKUP_RETAINING_DURATION="{{ j2_backup_retaining_duration | default('') }}"
+
+# Remote configuration (leave empty for no backup storage on remote)
+REMOTE_BACKUP_LOGIN="{{ j2_remote_backup_login | default('') }}"
+REMOTE_BACKUP_HOST="{{ j2_remote_backup_host | default('') }}"
+REMOTE_BACKUP_DIRECTORY="{{ j2_remote_backup_directory | default('') }}" # No trailing /
+REMOTE_BACKUP_SSH_KEYFILE="{{ j2_remote_backup_ssh_keyfile | default('') }}"
+
+{# Common functions #}
+{% include 'utils.bash.j2' %}
+
+# If the last returned code is an error code, deletes the backup folder and exits with
+# the error code
+function rollbackAndExitIfFail() {
+  CODE=$?
+  if [[ ${CODE} -ne 0 ]]; then
+    echoError "Error" "Something went wrong with the backup"
+    rm -r ${CURRENT_BACKUP_DIRECTORY}
+    echoError "Rollback" "Removed directory ${CURRENT_BACKUP_DIRECTORY}"
+    exit ${CODE}
+  fi
+}
+
+###############
+# Backup script
+###############
+
+# Base variables
+DATETIME=$(date +%Y-%m-%dT%H-%M-%S)
+CURRENT_BACKUP_DIRECTORY=${BACKUP_DIRECTORY}/${DATETIME}
+
+echoInfo "OpenSILEX Backup" "Starting backup in ${CURRENT_BACKUP_DIRECTORY}"
+
+# Create backup directory
+mkdir -p ${CURRENT_BACKUP_DIRECTORY}
+if [[ $? -ne 0 ]]; then
+  echoError "Init" "Could not create backup directory"
+  exit
+fi
+echoSuccess "Init" "Created directory ${CURRENT_BACKUP_DIRECTORY}"
+
+# Binary
+if [[ -d "${BIN_DIRECTORY}" ]]; then
+  echoInfo "Binary" "Archiving binaries & configuration files from directory ${BIN_DIRECTORY}"
+  BIN_ARCHIVE="${CURRENT_BACKUP_DIRECTORY}/bin.tar.gz"
+  tar czvf ${BIN_ARCHIVE} -C ${BIN_DIRECTORY} .
+  rollbackAndExitIfFail
+  echoSuccess "Binary" "Created archive ${BIN_ARCHIVE}"
+else
+  echoInfo "Binary" "No binary directory"
+fi
+
+# Data
+if [[ -d "${DATA_DIRECTORY}" ]]; then
+  echoInfo "Data" "Archiving files from directory ${DATA_DIRECTORY}"
+  DATA_ARCHIVE="${CURRENT_BACKUP_DIRECTORY}/data.tar.gz"
+  tar czvf ${DATA_ARCHIVE} -C ${DATA_DIRECTORY} .
+  rollbackAndExitIfFail
+  echoSuccess "Data" "Created archive ${DATA_ARCHIVE}"
+else
+  echoInfo "Data" "No data directory"
+fi
+
+# Logs
+if [[ -d "${LOGS_DIRECTORY}" ]]; then
+  echoInfo "Logs" "Archiving logs from directory ${LOGS_DIRECTORY}"
+  LOGS_ARCHIVE="${CURRENT_BACKUP_DIRECTORY}/logs.tar.gz"
+  tar czvf ${LOGS_ARCHIVE} -C ${LOGS_DIRECTORY} .
+  rollbackAndExitIfFail
+  echoSuccess "Logs" "Created archive ${LOGS_ARCHIVE}"
+else
+  echoInfo "Logs" "No logs directory"
+fi
+
+# MongoDB
+if [[ -n "${MONGO_HOST}" ]]; then
+  echoInfo "MongoDB" "Dumping database ${MONGO_DATABASE} from ${MONGO_HOST}"
+  MONGO_DUMP_DIRECTORY="${CURRENT_BACKUP_DIRECTORY}/mongodb"
+  mkdir ${MONGO_DUMP_DIRECTORY}
+  rollbackAndExitIfFail
+  mongodump -h ${MONGO_HOST} -d ${MONGO_DATABASE} -o ${MONGO_DUMP_DIRECTORY} --forceTableScan
+  rollbackAndExitIfFail
+  echoSuccess "MongoDB" "Created dump in ${MONGO_DUMP_DIRECTORY}"
+else
+  echoInfo "MongoDB" "No MongoDB host"
+fi
+
+# RDF4J
+if [[ -n "${RDF4J_HOST}" ]]; then
+  echoInfo "RDF4J" "Exporting repository ${RDF4J_REPOSITORY} from ${RDF4J_HOST}"
+  RDF4J_EXPORT_DIRECTORY="${CURRENT_BACKUP_DIRECTORY}/rdf4j"
+  RDF4J_EXPORT_FILE="${RDF4J_EXPORT_DIRECTORY}/${RDF4J_REPOSITORY}.trig"
+  mkdir ${RDF4J_EXPORT_DIRECTORY}
+  rollbackAndExitIfFail
+  curl -H "Accept: application/x-trig" ${RDF4J_HOST}/repositories/${RDF4J_REPOSITORY}/statements -o ${RDF4J_EXPORT_FILE} --fail
+  rollbackAndExitIfFail
+  echoSuccess "RDF4J" "Exported repository in ${RDF4J_EXPORT_FILE}"
+else
+  echoInfo "RDF4J" "No RDF4J host"
+fi
+
+DELETE_DATE=`date -Idate --date="${BACKUP_RETAINING_DURATION}"`
+
+# Removing backups older than 30 days
+if [[ -n "${BACKUP_RETAINING_DURATION}" ]]; then
+  echoInfo "Clean" "Deleting backups older than ${DELETE_DATE}"
+  find ${BACKUP_DIRECTORY}/ -mindepth 1 -maxdepth 1 -type d ! -newermt ${DELETE_DATE} -printf '%p\n' -execdir rm -dr {} \;
+  exitIfFail
+  echoSuccess "Clean" "Done"
+else
+  echoInfo "Clean" "No retain duration specified, keeping all backups"
+fi
+
+# Sending backups to remote & remove older backups
+if [[ -n "${REMOTE_BACKUP_HOST}" ]]; then
+  echoInfo "Remote backup" "Sending backup to ${REMOTE_BACKUP_LOGIN}@${REMOTE_BACKUP_HOST}:${REMOTE_BACKUP_DIRECTORY}"
+  ssh -i ${REMOTE_BACKUP_SSH_KEYFILE} "${REMOTE_BACKUP_LOGIN}@${REMOTE_BACKUP_HOST}" "mkdir -p ${REMOTE_BACKUP_DIRECTORY}/${DATETIME}/"
+  echoInfo "Remote backup" "Created folder ${REMOTE_BACKUP_DIRECTORY}/${DATETIME}/, starting rsync"
+  exitIfFail
+  rsync -e "ssh -i ${REMOTE_BACKUP_SSH_KEYFILE}" -avh ${CURRENT_BACKUP_DIRECTORY}/ "${REMOTE_BACKUP_LOGIN}@${REMOTE_BACKUP_HOST}:${REMOTE_BACKUP_DIRECTORY}/${DATETIME}/"
+  exitIfFail
+  echoSuccess "Remote backup" "Done"
+  if [[ -n "${BACKUP_RETAINING_DURATION}" ]]; then
+    echoInfo "Remote clean" "Deleting backups older than ${DELETE_DATE}"
+    ssh -i ${REMOTE_BACKUP_SSH_KEYFILE} "${REMOTE_BACKUP_LOGIN}@${REMOTE_BACKUP_HOST}" "find ${REMOTE_BACKUP_DIRECTORY}/ -mindepth 1 -maxdepth 1 -type d ! -newermt ${DELETE_DATE} ! -name \"????-??-01*\" -printf '%p\n' -execdir rm -dr {} \;"
+    echoSuccess "Remote clean" "Done"
+  else
+    echoInfo "Remote clean" "No retain duration specified, keeping all backups"
+  fi
+else
+  echoInfo "Remote backup" "No remote specified"
+fi
+
+echoSuccess "OpenSILEX Backup" "Backup done in in ${CURRENT_BACKUP_DIRECTORY}"

@@ -1,0 +1,78 @@
+---
+- name: Deploy backup script on instance
+  hosts: all
+  vars:
+    backup_script_filename: "opensilex-backup-{{ inventory_hostname }}.bash"
+    restore_script_filename: "opensilex-restore-{{ inventory_hostname }}.bash"
+    backup_log_filename: "opensilex-backup-{{ inventory_hostname }}.log"
+    backup_script_fullpath: "{{ backup_deploy_location }}/{{ backup_script_filename }}"
+    restore_script_fullpath: "{{ backup_deploy_location }}/{{ restore_script_filename }}"
+    backup_log_fullpath: "{{ backup_log_location }}/{{ backup_log_filename }}"
+  tasks:
+    - name: Set up backup script
+      block:
+        - name: Create backup script directory
+          ansible.builtin.file:
+            path: "{{ backup_deploy_location }}"
+            state: directory
+        - name: Create backup log directory
+          ansible.builtin.file:
+            path: "{{ backup_log_location }}"
+            state: directory
+        - name: Template backup script
+          ansible.builtin.template:
+            src: opensilex-backup.bash.j2
+            dest: "{{ backup_script_fullpath }}"
+            mode: "755"
+        - name: Create crontab job
+          throttle: 1 # Avoid parallel edits on crontab file when running on the same machine
+          ansible.builtin.cron:
+            name: "OpenSILEX backup script {{ inventory_hostname }}"
+            minute: "0"
+            hour: "1"
+            job: "/bin/bash {{ backup_script_fullpath }} >> {{ backup_log_fullpath }} 2>&1"
+    - name: Set up restore script
+      block:
+        - name: Template restore script
+          ansible.builtin.template:
+            src: opensilex-restore.bash.j2
+            dest: "{{ restore_script_fullpath }}"
+            mode: "755"
+    - name: Set up logrotate
+      when: backup_logrotate_location is defined
+      vars:
+        backup_logrotate_filename: "opensilex-backup-{{ inventory_hostname }}.conf"
+        backup_logrotate_status_filename: "opensilex-backup-{{ inventory_hostname }}.status"
+        backup_logrotate_fullpath: "{{ backup_logrotate_location }}/{{ backup_logrotate_filename }}"
+        backup_logrotate_status_fullpath: "{{ backup_logrotate_location }}/{{ backup_logrotate_status_filename }}"
+      block:
+        - name: Create logrotate folder
+          ansible.builtin.file:
+            path: "{{ backup_logrotate_location }}"
+            state: directory
+        - name: Template logrotate configuration file
+          ansible.builtin.template:
+            src: opensilex-backup-logrotate.conf.j2
+            dest: "{{ backup_logrotate_fullpath }}"
+        - name: Create crontab job for logrotate
+          throttle: 1
+          ansible.builtin.cron:
+            name: "OpenSILEX backup log rotation {{ inventory_hostname }}"
+            minute: "0"
+            hour: "2"
+            job: "/usr/sbin/logrotate -s {{ backup_logrotate_status_fullpath }} {{ backup_logrotate_fullpath }} > /dev/null 2>&1"
+    - name: Set up remote SSH connection
+      when: j2_remote_backup_ssh_keyfile is defined
+      block:
+        - name: Add SSH key to connect to remote
+          when: remote_ssh_key is defined
+          ansible.builtin.copy:
+            dest: "{{ j2_remote_backup_ssh_keyfile }}"
+            content: "{{ remote_ssh_key }}"
+            mode: "0600"
+        - name: Add SSH key to connect to remote (public)
+          when: remote_ssh_key_public is defined
+          ansible.builtin.copy:
+            dest: "{{ j2_remote_backup_ssh_keyfile }}.pub"
+            content: "{{ remote_ssh_key_public }}"
+            mode: "0644"

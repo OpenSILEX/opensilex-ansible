@@ -1,0 +1,65 @@
+######################
+# Colors (for display)
+######################
+
+NC='\033[0m' # No color
+
+# Regular colors
+BLACK='\033[0;30m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[0;37m'
+
+# High intensity colors
+I_BLACK='\033[0;90m'
+I_RED='\033[0;91m'
+I_GREEN='\033[0;92m'
+I_YELLOW='\033[0;93m'
+I_BLUE='\033[0;94m'
+I_PURPLE='\033[0;95m'
+I_CYAN='\033[0;96m'
+I_WHITE='\033[0;97m'
+
+##################
+# Common functions
+##################
+
+# Usage: echoColor COLOR CATEGORY MESSAGE
+# Print a message in format "[CATEGORY] MESSAGE" with the specified color
+# "[CATEGORY]" will be printed with the given color (COLOR)
+# "MESSAGE" will be printed with the high intensity version of the color (I_COLOR)
+# If output is not a terminal, do not print colors
+function echoColor() {
+  if [[ -t 1 ]]; then
+    COLOR="${1}"
+    I_COLOR="I_${1}"
+    echo -e ${!COLOR}[$2] ${!I_COLOR}$3${NC}
+  else
+    echo [$2] $3
+  fi
+}
+
+function echoError() {
+  echoColor RED "$1" "$2"
+}
+
+function echoInfo() {
+  echoColor CYAN "$1" "$2"
+}
+
+function echoSuccess() {
+  echoColor GREEN "$1" "$2"
+}
+
+# If the last returned code is an error code, exits with the error code
+function exitIfFail() {
+  CODE=$?
+  if [[ ${CODE} -ne 0 ]]; then
+    echoError "Error" "Something went wrong with the backup"
+    exit ${CODE}
+  fi
+}
