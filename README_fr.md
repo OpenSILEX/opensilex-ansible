@@ -189,7 +189,7 @@ all:
         j2_backup_retaining_duration: "-30 day"
         j2_remote_backup_login: negrev
         j2_remote_backup_host: muse-login.meso.umontpellier.fr
-        j2_remote_backup_ssh_keyfile: /home/opensilex/backup-test/remote_ssh_key
+        j2_remote_backup_ssh_keyfile: /home/opensilex/backup/remote_ssh_key
         j2_remote_backup_directory: "/home/negrev/backup/{{ inventory_hostname }}"
       hosts:
         m3p: # Configuration identique au groupe, pas de variable à définir
